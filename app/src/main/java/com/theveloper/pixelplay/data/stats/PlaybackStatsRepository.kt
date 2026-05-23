@@ -44,6 +44,7 @@ class PlaybackStatsRepository @Inject constructor(
     private val historyFile = File(context.filesDir, "playback_history.json")
     private val atomicHistoryFile = AtomicFile(historyFile)
     private val fileLock = Any()
+    private var cachedEvents: List<PlaybackEvent>? = null  // guarded by fileLock
     private val eventsType = object : TypeToken<MutableList<PlaybackEvent>>() {}.type
     private val _refreshVersion = MutableStateFlow(0L)
     val refreshFlow: StateFlow<Long> = _refreshVersion.asStateFlow()
@@ -276,6 +277,7 @@ class PlaybackStatsRepository @Inject constructor(
                 compareByDescending<SongPlaybackSummary> { it.totalDurationMs }
                     .thenByDescending { it.playCount }
             )
+            .take(MAX_SONG_STATS_COUNT)
         val topSongs = allSongs.take(5)
 
         val topGenres = segmentsBySong.entries
@@ -419,13 +421,15 @@ class PlaybackStatsRepository @Inject constructor(
         }
         val peakDayLabel = peakDay?.key?.getDisplayName(TextStyle.FULL, Locale.US)
         val peakDayDuration = peakDay?.value?.sumOf { it.durationMs } ?: 0L
-        val dayListeningDistribution = computeDayListeningDistribution(
-            spans = overallSpans,
-            zoneId = zoneId,
-            range = range,
-            startBound = startBound,
-            endBound = endBound
-        )
+        val dayListeningDistribution = if (range == StatsTimeRange.DAY || range == StatsTimeRange.WEEK) {
+            computeDayListeningDistribution(
+                spans = overallSpans,
+                zoneId = zoneId,
+                range = range,
+                startBound = startBound,
+                endBound = endBound
+            )
+        } else null
 
         return PlaybackStatsSummary(
             range = range,
@@ -503,8 +507,11 @@ class PlaybackStatsRepository @Inject constructor(
     }
 
     private fun readEvents(): List<PlaybackEvent> {
+        synchronized(fileLock) { cachedEvents }?.let { return it }
         val raw = synchronized(fileLock) { readRawHistoryLocked() }
-        return parseEvents(raw)
+        return parseEvents(raw).also { parsed ->
+            synchronized(fileLock) { if (cachedEvents == null) cachedEvents = parsed }
+        }
     }
 
     private fun readRawHistoryLocked(): String? {
@@ -821,7 +828,9 @@ class PlaybackStatsRepository @Inject constructor(
                 if (latestRaw != rawSnapshot) {
                     return@synchronized false
                 }
-                writePayloadLocked(payload)
+                val result = writePayloadLocked(payload)
+                if (result) cachedEvents = null
+                result
             }
             if (writeSucceeded) {
                 return true
@@ -831,7 +840,9 @@ class PlaybackStatsRepository @Inject constructor(
         val fallbackRawSnapshot = synchronized(fileLock) { readRawHistoryLocked() }
         val payload = serializeEvents(transform(parseEvents(fallbackRawSnapshot)))
         return synchronized(fileLock) {
-            writePayloadLocked(payload)
+            val result = writePayloadLocked(payload)
+            if (result) cachedEvents = null
+            result
         }
     }
 
@@ -1088,6 +1099,7 @@ class PlaybackStatsRepository @Inject constructor(
         private const val UNKNOWN_ARTIST = "Unknown Artist"
         private val MAX_HISTORY_AGE_MS = TimeUnit.DAYS.toMillis(730) // Keep roughly two years of history
         private const val SEGMENT_JOIN_TOLERANCE_MS = 0L
+        private const val MAX_SONG_STATS_COUNT = 100
     }
 }
 

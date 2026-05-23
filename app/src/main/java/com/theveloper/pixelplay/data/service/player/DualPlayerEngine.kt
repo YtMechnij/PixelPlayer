@@ -874,6 +874,7 @@ class DualPlayerEngine @Inject constructor(
     }
 
     fun cancelNext() {
+        val shouldPublishMasterPlayer = transitionRunning
         transitionJob?.cancel()
         transitionRunning = false
         resetPreparedWindowState()
@@ -885,6 +886,9 @@ class DualPlayerEngine @Inject constructor(
         }
         if (::playerA.isInitialized) {
             playerA.volume = 1f
+            if (shouldPublishMasterPlayer) {
+                onPlayerSwappedListeners.forEach { it(playerA) }
+            }
         }
         incomingTrackReplayGainVolume = null
         setPauseAtEndOfMediaItems(false)

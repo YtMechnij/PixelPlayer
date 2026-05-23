@@ -858,11 +858,15 @@ class PlayerViewModel @Inject constructor(
     }
 
     private fun cancelPendingDirectPlayback() {
+        cancelPendingDirectPlaybackBuild()
+        pendingQueueSegmentsJob?.cancel()
+        pendingQueueSegmentsJob = null
+    }
+
+    private fun cancelPendingDirectPlaybackBuild() {
         directPlaybackToken += 1L
         directPlaybackJob?.cancel()
         directPlaybackJob = null
-        pendingQueueSegmentsJob?.cancel()
-        pendingQueueSegmentsJob = null
     }
 
     private fun throwIfDirectPlaybackRequestIsStale(requestToken: Long) {
@@ -2243,29 +2247,34 @@ class PlayerViewModel @Inject constructor(
             }
             return
         }    // Local playback logic
-        mediaController?.let { controller ->
-            val currentQueue = _playerUiState.value.currentPlaybackQueue
-            val songIndexInQueue = currentQueue.indexOfFirst { it.id == song.id }
-            val queueMatchesContext = currentQueue.matchesSongOrder(playbackContext)
+        val controller = mediaController
+        val currentQueue = _playerUiState.value.currentPlaybackQueue
+        val songIndexInQueue = currentQueue.indexOfFirst { it.id == song.id }
+        val queueMatchesContext = currentQueue.matchesSongOrder(playbackContext)
+        val reusableTargetIndex = if (
+            controller != null &&
+            controller.isConnected &&
+            !dualPlayerEngine.isTransitionRunning() &&
+            songIndexInQueue != -1 &&
+            queueMatchesContext
+        ) {
+            controller.resolveReusablePlaybackTargetIndex(songIndexInQueue, song.id)
+        } else {
+            null
+        }
 
-            if (songIndexInQueue != -1 && queueMatchesContext) {
-                cancelPendingDirectPlayback()
-                if (controller.currentMediaItemIndex == songIndexInQueue) {
-                    if (!controller.isPlaying) controller.play()
-                } else {
-                    controller.seekTo(songIndexInQueue, 0L)
-                    controller.play()
+        if (controller != null && reusableTargetIndex != null) {
+            cancelPendingDirectPlaybackBuild()
+            playLoadedControllerItem(controller, reusableTargetIndex)
+            if (isVoluntaryPlay) {
+                incrementSongScore(song)
+                if (playlistId != null && queueName != "None") {
+                    appShortcutManager.updateLastPlaylistShortcut(playlistId, queueName)
                 }
-                if (isVoluntaryPlay) {
-                    incrementSongScore(song)
-                    if (playlistId != null && queueName != "None") {
-                        appShortcutManager.updateLastPlaylistShortcut(playlistId, queueName)
-                    }
-                }
-            } else {
-                if (isVoluntaryPlay) incrementSongScore(song)
-                playSongs(playbackContext, song, queueName, playlistId)
             }
+        } else {
+            if (isVoluntaryPlay) incrementSongScore(song)
+            playSongs(playbackContext, song, queueName, playlistId)
         }
         resetPredictiveBackState()
     }
@@ -2286,6 +2295,34 @@ class PlayerViewModel @Inject constructor(
     private fun List<Song>.matchesSongOrder(contextSongs: List<Song>): Boolean {
         if (size != contextSongs.size) return false
         return indices.all { this[it].id == contextSongs[it].id }
+    }
+
+    private fun MediaController.resolveReusablePlaybackTargetIndex(
+        songIndexInQueue: Int,
+        songId: String
+    ): Int? {
+        currentMediaItem?.takeIf { it.mediaId == songId }?.let {
+            return currentMediaItemIndex.takeIf { index -> index != C.INDEX_UNSET } ?: 0
+        }
+
+        if (songIndexInQueue !in 0 until mediaItemCount) return null
+
+        val mediaIdAtTarget = runCatching { getMediaItemAt(songIndexInQueue).mediaId }.getOrNull()
+        return songIndexInQueue.takeIf { mediaIdAtTarget == songId }
+    }
+
+    private fun playLoadedControllerItem(controller: MediaController, targetIndex: Int) {
+        val shouldSeekToStart =
+            controller.currentMediaItemIndex != targetIndex ||
+                controller.playbackState == Player.STATE_ENDED
+
+        if (shouldSeekToStart) {
+            controller.seekTo(targetIndex, 0L)
+        }
+        if (controller.playbackState == Player.STATE_IDLE && controller.mediaItemCount > 0) {
+            controller.prepare()
+        }
+        controller.play()
     }
 
     private fun Song.requiresHydration(): Boolean {
@@ -3406,6 +3443,7 @@ class PlayerViewModel @Inject constructor(
 
             val playSongsAction = {
                 // Use Direct Engine Access to avoid TransactionTooLargeException on Binder
+                dualPlayerEngine.cancelNext()
                 val enginePlayer = dualPlayerEngine.masterPlayer
 
                 enginePlayer.setMediaItem(startMediaItem, 0L)
