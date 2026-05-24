@@ -184,7 +184,7 @@
     <string name="presentation_batch_g_artist_info_title">关于多艺术家解析</string>
     <string name="presentation_batch_g_artist_info_body">PixelPlayer 会使用字符分隔符（/、;、&amp;）和单词分隔符（feat.、ft.、vs.、x）拆分艺术家标签。单词分隔符匹配时不区分大小写。
 
-“从标题提取艺术家”会检测歌曲标题中类似（feat. Artist）的模式。
+「从标题提取艺术家」会检测歌曲标题中类似（feat. Artist）的模式。
 
 反斜杠（\）可用于转义字符分隔符。</string>
     <string name="presentation_batch_g_artist_example_arrow"> → </string>
