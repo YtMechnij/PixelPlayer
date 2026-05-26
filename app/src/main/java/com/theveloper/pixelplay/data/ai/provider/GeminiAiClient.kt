@@ -11,8 +11,8 @@ import kotlinx.coroutines.withContext
 class GeminiAiClient(private val apiKey: String) : AiClient {
     
     companion object {
-        // Updated: Using the free tier model exactly as named in the spec
-        private const val DEFAULT_GEMINI_MODEL = "gemini-3-flash-preview"
+        // Cheapest/fastest Gemini family default. Keep Gemini choices Flash-only.
+        private const val DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite"
     }
     
     private fun createModel(modelName: String, systemPrompt: String, temp: Float = 0.7f): GenerativeModel {
@@ -123,27 +123,40 @@ class GeminiAiClient(private val apiKey: String) : AiClient {
                 val fullName = match.groupValues[1]
                 val modelName = fullName.removePrefix("models/")
                 
-                if (modelName.startsWith("gemini", ignoreCase = true) &&
-                    !modelName.contains("embedding", ignoreCase = true)) {
+                if (isSupportedFlashModel(modelName)) {
                     models.add(modelName)
                 }
             }
             
-            return if (models.isNotEmpty()) models else getDefaultModels()
+            return if (models.isNotEmpty()) sortFlashModels(models) else getDefaultModels()
         } catch (e: Exception) {
             return getDefaultModels()
         }
     }
     
+    private fun isSupportedFlashModel(modelName: String): Boolean {
+        return modelName.startsWith("gemini", ignoreCase = true) &&
+            modelName.contains("flash", ignoreCase = true) &&
+            !modelName.contains("embedding", ignoreCase = true) &&
+            !modelName.contains("image", ignoreCase = true)
+    }
+
+    private fun sortFlashModels(models: List<String>): List<String> {
+        val preferred = getDefaultModels()
+        return models.distinct().sortedWith(
+            compareBy<String> { model ->
+                preferred.indexOf(model).takeIf { it >= 0 } ?: Int.MAX_VALUE
+            }.thenBy { it.lowercase() }
+        )
+    }
+
     private fun getDefaultModels(): List<String> {
-        // Updated fallback list: prioritize free tiers & latest 3.x models
         return listOf(
-            "gemini-3-flash-preview",
-            "gemini-3.1-pro-preview",
-            "gemini-3.1-flash-lite-preview",
-            "gemini-flash-latest",
+            "gemini-2.5-flash-lite",
             "gemini-2.5-flash",
-            "gemini-2.5-pro",
+            "gemini-flash-lite-latest",
+            "gemini-flash-latest",
+            "gemini-2.0-flash-lite",
             "gemini-2.0-flash"
         )
     }

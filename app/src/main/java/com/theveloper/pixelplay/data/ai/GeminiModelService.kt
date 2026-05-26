@@ -86,9 +86,8 @@ class GeminiModelService @Inject constructor(
                 val fullName = match.groupValues[1]
                 val modelName = fullName.removePrefix("models/")
 
-                // Filter for generative models (gemini, gemini-pro, gemini-flash, etc.)
-                if (modelName.startsWith("gemini", ignoreCase = true) &&
-                    !modelName.contains("embedding", ignoreCase = true)) {
+                // Keep the UI focused on the cheapest/fastest Gemini family: Flash only.
+                if (isSupportedFlashModel(modelName)) {
                     models.add(GeminiModel(
                         name = modelName,
                         displayName = formatDisplayName(modelName)
@@ -97,7 +96,7 @@ class GeminiModelService @Inject constructor(
             }
 
             return if (models.isNotEmpty()) {
-                models.sortedBy { it.displayName.lowercase() }
+                sortFlashModels(models)
             } else {
                 getDefaultModels()
             }
@@ -147,6 +146,22 @@ class GeminiModelService @Inject constructor(
         }
     }
 
+    private fun isSupportedFlashModel(modelName: String): Boolean {
+        return modelName.startsWith("gemini", ignoreCase = true) &&
+            modelName.contains("flash", ignoreCase = true) &&
+            !modelName.contains("embedding", ignoreCase = true) &&
+            !modelName.contains("image", ignoreCase = true)
+    }
+
+    private fun sortFlashModels(models: List<GeminiModel>): List<GeminiModel> {
+        val preferred = getDefaultModels().map { it.name }
+        return models.distinctBy { it.name }.sortedWith(
+            compareBy<GeminiModel> { model ->
+                preferred.indexOf(model.name).takeIf { it >= 0 } ?: Int.MAX_VALUE
+            }.thenBy { it.displayName.lowercase() }
+        )
+    }
+
     private fun formatDisplayName(modelName: String): String {
         // Convert "gemini-2.5-flash" to "Gemini 2.5 Flash"
         return modelName
@@ -157,22 +172,13 @@ class GeminiModelService @Inject constructor(
     }
 
     private fun getDefaultModels(): List<GeminiModel> {
-        // Full curated list derived from latest supported JSON spec
         return listOf(
-            GeminiModel("gemini-3-flash-preview", "Gemini 3.0 Flash (Free Default)"),
-            GeminiModel("gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview"),
-            GeminiModel("gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash Lite"),
-            GeminiModel("gemini-3-pro-preview", "Gemini 3.0 Pro"),
-            GeminiModel("gemini-flash-latest", "Gemini Flash Latest"),
-            GeminiModel("gemini-flash-lite-latest", "Gemini Flash-Lite Latest"),
-            GeminiModel("gemini-pro-latest", "Gemini Pro Latest"),
+            GeminiModel("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite (Cheapest/Fastest Default)"),
             GeminiModel("gemini-2.5-flash", "Gemini 2.5 Flash"),
-            GeminiModel("gemini-2.5-pro", "Gemini 2.5 Pro"),
-            GeminiModel("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite"),
-            GeminiModel("gemini-2.0-flash", "Gemini 2.0 Flash"),
-            GeminiModel("gemini-2.0-flash-lite", "Gemini 2.0 Flash-Lite"),
-            GeminiModel("gemma-3-12b-it", "Gemma 3 12B"),
-            GeminiModel("gemma-3-27b-it", "Gemma 3 27B")
+            GeminiModel("gemini-flash-lite-latest", "Gemini Flash Lite Latest"),
+            GeminiModel("gemini-flash-latest", "Gemini Flash Latest"),
+            GeminiModel("gemini-2.0-flash-lite", "Gemini 2.0 Flash Lite"),
+            GeminiModel("gemini-2.0-flash", "Gemini 2.0 Flash")
         )
     }
 }

@@ -353,7 +353,11 @@ class AiStateHolder @Inject constructor(
         val detail = extractAiErrorDetail(error)
 
         return when {
-            providerFailure?.isApiKeyIssue() == true || detail.contains("api key", ignoreCase = true) ->
+            providerFailure?.isApiKeyIssue() == true ||
+                detail.contains("api key not valid", ignoreCase = true) ||
+                detail.contains("invalid api key", ignoreCase = true) ||
+                detail.contains("incorrect api key", ignoreCase = true) ||
+                detail.contains("invalid key", ignoreCase = true) ->
                 context.getString(R.string.ai_error_api_key)
 
             providerFailure?.isBillingIssue() == true ->
@@ -385,10 +389,12 @@ class AiStateHolder @Inject constructor(
             detail.contains("permission", ignoreCase = true) ||
             detail.contains("denied", ignoreCase = true) ||
             detail.contains("forbidden", ignoreCase = true) ||
-            detail.contains("unauthorized", ignoreCase = true) ||
-            detail.contains("401", ignoreCase = true) ||
             detail.contains("403", ignoreCase = true) ->
-                "Permission Denied. Your API key might be invalid, or it lacks the necessary permissions for this model."
+                "Permission denied by the AI provider. Check that this API key has access to the selected model and that the provider API is enabled."
+
+            detail.contains("unauthorized", ignoreCase = true) ||
+            detail.contains("401", ignoreCase = true) ->
+                context.getString(R.string.ai_error_api_key)
 
             // Rate limiting
             detail.contains("rate limit", ignoreCase = true) ||

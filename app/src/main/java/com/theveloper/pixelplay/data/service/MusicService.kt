@@ -382,12 +382,13 @@ class MusicService : MediaLibraryService() {
             }
         }
 
-        // A MEDIA_BUTTON broadcast starts the 5-second foreground-service timeout
-        // BEFORE MusicService is created. Promote to foreground before super.onCreate()
-        // — Hilt injection plus MediaLibraryService.onCreate() can otherwise consume
-        // most of the budget on a slow cold-start. The temporary notification only uses
-        // Context/resources, no injected fields, so it is safe before super.onCreate().
-        temporaryForegroundStartedInOnCreate = consumePendingMediaButtonForegroundStart()
+        // A media-button startForegroundService() can reach MusicService directly (not always
+        // through PixelPlayMediaButtonReceiver), so the pending counter is only a hint. Promote
+        // immediately on cold start before super.onCreate(): Hilt injection and MediaLibraryService
+        // startup can otherwise consume Android's 5-second FGS deadline before onStartCommand()
+        // receives the media-button intent.
+        temporaryForegroundStartedInOnCreate =
+            consumePendingMediaButtonForegroundStart() || Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
         if (temporaryForegroundStartedInOnCreate) {
             startTemporaryForegroundForCommand()
         }
@@ -834,6 +835,20 @@ class MusicService : MediaLibraryService() {
             it.setSmallIcon(R.drawable.monochrome_player)
         }
         setMediaNotificationProvider(localOnlyProvider)
+        if (temporaryForegroundStartedInOnCreate) {
+            serviceScope.launch {
+                delay(2_000L)
+                val player = mediaSession?.player
+                val isActivelyPlaying = player?.let {
+                    it.playWhenReady &&
+                        it.playbackState != Player.STATE_IDLE &&
+                        it.playbackState != Player.STATE_ENDED
+                } == true
+                if (!isActivelyPlaying) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                }
+            }
+        }
         serviceScope.launch {
             restorePlaybackQueueSnapshotIfNeeded()
             mediaSession?.let { refreshMediaSessionUi(it) }
@@ -1102,7 +1117,7 @@ class MusicService : MediaLibraryService() {
             }
         }
         val startCommandResult = super.onStartCommand(intent, flags, startId)
-        if (needsTemporaryForeground) {
+        if (needsTemporaryForeground || startedTemporaryForegroundInOnCreate) {
             val player = mediaSession?.player
             val isActivelyPlaying = player?.let {
                 it.playWhenReady &&
@@ -1111,7 +1126,9 @@ class MusicService : MediaLibraryService() {
             } == true
             if (!isActivelyPlaying) {
                 stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelfResult(startId)
+                if (needsTemporaryForeground) {
+                    stopSelfResult(startId)
+                }
             }
         }
         return startCommandResult
